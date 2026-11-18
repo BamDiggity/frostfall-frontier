@@ -345,6 +345,13 @@ export class GameRenderer {
         ctx.strokeStyle = `rgba(14, 165, 233, ${0.65 + pulse * 0.3})`;
         ctx.lineWidth = 3;
         ctx.stroke();
+      } else if (b.kind === 'storehouse') {
+        ctx.fillStyle = 'rgba(56, 189, 248, 0.16)';
+        ctx.fill();
+        ctx.setLineDash([6, 5]);
+        ctx.strokeStyle = 'rgba(14, 165, 233, 0.78)';
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
       } else if (b.kind === 'trading_post') {
         ctx.fillStyle = 'rgba(250, 204, 21, 0.16)';
         ctx.fill();
@@ -387,6 +394,8 @@ export class GameRenderer {
       this.drawHomestead(ctx, b.level, t);
     } else if (b.kind === 'furnace') {
       this.drawFurnace(ctx, b, t);
+    } else if (b.kind === 'storehouse') {
+      this.drawStorehouse(ctx, b.level);
     } else if (b.kind === 'trading_post') {
       this.drawTradingPost(ctx, b.level);
     } else if (b.level === 0) {
@@ -715,6 +724,60 @@ export class GameRenderer {
     ctx.fill();
   }
 
+  private drawStorehouse(ctx: CanvasRenderingContext2D, level: number): void {
+    // Sturdy timber storehouse & supply crates
+    ctx.fillStyle = '#7c4d25';
+    roundedRect(ctx, -28, -12, 56, 28, 5);
+    ctx.fill();
+    // Sloped blue-slate roof with snow cap
+    ctx.fillStyle = '#0369a1';
+    ctx.beginPath();
+    ctx.moveTo(0, -38);
+    ctx.lineTo(-34, -10);
+    ctx.lineTo(34, -10);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#f8fbff';
+    ctx.beginPath();
+    ctx.moveTo(0, -39);
+    ctx.lineTo(-27, -17);
+    ctx.quadraticCurveTo(0, -22, 27, -17);
+    ctx.closePath();
+    ctx.fill();
+    // Double barn doors & crate
+    ctx.fillStyle = '#451a03';
+    roundedRect(ctx, -12, -2, 24, 18, 3);
+    ctx.fill();
+    ctx.strokeStyle = '#d97706';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(-12, -2);
+    ctx.lineTo(12, 16);
+    ctx.moveTo(12, -2);
+    ctx.lineTo(-12, 16);
+    ctx.stroke();
+    // Side supply crate
+    ctx.fillStyle = '#b45309';
+    roundedRect(ctx, 16, 4, 14, 12, 2);
+    ctx.fill();
+    // Floating pill label
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+    roundedRect(ctx, -30, 22, 60, 18, 7);
+    ctx.fill();
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+    ctx.fillStyle = '#bae6fd';
+    ctx.font = '800 10px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText('📦 STORE', 0, 34);
+    if (level > 1) {
+      ctx.fillStyle = '#7dd3fc';
+      ctx.font = '700 9px system-ui';
+      ctx.fillText(`Lv.${level}`, 0, -42);
+    }
+  }
+
   private drawTradingPost(ctx: CanvasRenderingContext2D, level: number): void {
     // Wooden stall & cargo sled
     ctx.fillStyle = '#8b5a2b';
@@ -740,6 +803,16 @@ export class GameRenderer {
     ctx.font = '800 12px system-ui';
     ctx.textAlign = 'center';
     ctx.fillText('$', 0, -30);
+    // Clear SELL pill label below Trading Sled
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+    roundedRect(ctx, -28, 22, 56, 18, 7);
+    ctx.fill();
+    ctx.strokeStyle = '#facc15';
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+    ctx.fillStyle = '#fef08a';
+    ctx.font = '800 10px system-ui';
+    ctx.fillText('💰 SELL', 0, 34);
     if (level > 1) {
       ctx.fillStyle = '#fde047';
       ctx.font = '700 9px system-ui';

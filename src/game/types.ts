@@ -111,6 +111,7 @@ export const HOMESTEAD_TIERS: HomesteadTierInfo[] = [
 export type BuildingKind =
   | 'homestead'
   | 'furnace'
+  | 'storehouse'
   | 'trading_post'
   | 'sawmill'
   | 'hunters_lodge'

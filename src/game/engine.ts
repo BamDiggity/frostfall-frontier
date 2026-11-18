@@ -424,6 +424,26 @@ export class GameEngine {
         bounceAnim: 0,
       },
       {
+        id: 'storehouse',
+        kind: 'storehouse',
+        name: 'Camp Storehouse',
+        x: -160,
+        y: 25,
+        radius: 42,
+        zoneRequired: 1,
+        level: 1,
+        maxLevel: 5,
+        deposited: {},
+        depositedGold: 0,
+        inputBuffer: {},
+        outputStock: 0,
+        processTimer: 0,
+        processDuration: 0,
+        fuel: 0,
+        maxFuel: 0,
+        bounceAnim: 0,
+      },
+      {
         id: 'trading_post',
         kind: 'trading_post',
         name: 'Trading Sled',
@@ -634,6 +654,8 @@ export class GameEngine {
     switch (b.kind) {
       case 'furnace':
         return { resources: { wood: Math.round(16 * mult), coal: lvl >= 2 ? Math.round(8 * mult) : 0 }, gold: Math.round(60 * mult) };
+      case 'storehouse':
+        return { resources: { wood: Math.round(12 * mult) }, gold: Math.round(55 * mult) };
       case 'trading_post':
         return { resources: { wood: Math.round(14 * mult) }, gold: Math.round(75 * mult) };
       case 'sawmill':
@@ -1199,7 +1221,19 @@ export class GameEngine {
       const dist = Math.hypot(p.x - b.x, p.y - b.y);
       if (dist > b.radius + 32) continue;
 
-      // 1. Trading Post: sell backpack goods rapidly for Gold!
+      // 1a. Camp Storehouse: stash backpack goods safely into Town Stockpile (usable for all upgrades!)
+      if (b.kind === 'storehouse' && b.level > 0 && p.backpack.length > 0) {
+        const stored = p.backpack.pop()!;
+        this.addStockpile(stored, 1);
+        this.spawnFlyingItem(stored, p.x, p.y - 24, b.x, b.y - 12);
+        this.spawnFloatingText(b.x, b.y - 34, `📦 +1 ${RESOURCE_META[stored].shortName}`, '#7dd3fc', 0.95);
+        sfx.playPop(5);
+        b.bounceAnim = 0.22;
+        p.transferCooldown = 0.075;
+        return;
+      }
+
+      // 1b. Trading Post: sell backpack goods rapidly for Gold!
       if (b.kind === 'trading_post' && b.level > 0 && p.backpack.length > 0) {
         const sold = p.backpack.pop()!;
         const value = Math.max(1, Math.round(RESOURCE_META[sold].sellValue * this.getTradeGoldMultiplier()));
