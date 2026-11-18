@@ -27,6 +27,9 @@ export class GameHud {
   private modalHostEl!: HTMLElement;
 
   private uiRefreshAccum = 0;
+  private lastGoalHtml = '';
+  private lastDrawerHtml = '';
+  private pointerDownInUi = false;
 
   constructor(root: HTMLElement, engine: GameEngine) {
     this.root = root;
@@ -64,8 +67,8 @@ export class GameHud {
     if (this.uiRefreshAccum >= 0.25) {
       this.uiRefreshAccum = 0;
       this.syncLiveHud();
-      if (this.activeTab !== null) {
-        this.renderDrawer();
+      if (this.activeTab !== null && !this.pointerDownInUi) {
+        this.renderDrawer(false);
       }
     }
   }
@@ -120,6 +123,16 @@ export class GameHud {
     this.drawerHostEl = this.root.querySelector('#drawer-host')!;
     this.modalHostEl = this.root.querySelector('#modal-host')!;
 
+    this.root.addEventListener('pointerdown', () => {
+      this.pointerDownInUi = true;
+    });
+    window.addEventListener('pointerup', () => {
+      this.pointerDownInUi = false;
+    });
+    window.addEventListener('pointercancel', () => {
+      this.pointerDownInUi = false;
+    });
+
     this.muteBtnEl.addEventListener('click', () => {
       sfx.muted = !sfx.muted;
       if (!sfx.muted) sfx.unlock();
@@ -133,8 +146,39 @@ export class GameHud {
       sfx.unlock();
       const tab = btn.dataset.tab as DrawerTab;
       this.activeTab = this.activeTab === tab ? null : tab;
-      this.renderDrawer();
+      this.renderDrawer(true);
       this.syncLiveHud();
+    });
+
+    // Persistent delegated clicks on Goal Strip (never dropped by periodic refresh!)
+    this.goalStripEl.addEventListener('click', (ev) => {
+      const target = ev.target as HTMLElement;
+      const e = this.engine;
+      if (target.closest('#btn-collect-tribute')) {
+        const got = e.collectPendingTribute();
+        if (got > 0) this.showToast(`👑 Collected +${got}g Empire Tribute!`);
+        this.syncLiveHud();
+        return;
+      }
+      if (target.closest('#btn-goal-upgrade')) {
+        if (e.instantUpgradeBuilding('homestead')) {
+          this.renderDrawer(true);
+          this.syncLiveHud();
+        } else {
+          this.showToast('Gather materials & walk onto the Homestead pad to deposit!');
+        }
+        return;
+      }
+      if (target.closest('#btn-goal-next-town')) {
+        this.activeTab = 'map';
+        this.renderDrawer(true);
+        this.syncLiveHud();
+      }
+    });
+
+    // Persistent delegated clicks on Drawer Host (100% reliable on every tap/click!)
+    this.drawerHostEl.addEventListener('click', (ev) => {
+      this.handleDrawerClick(ev);
     });
   }
 
@@ -183,35 +227,9 @@ export class GameHud {
       html += `<div class="goal-banner ready">👑 Supreme Ruler of Aurora Citadel!</div>`;
     }
 
-    this.goalStripEl.innerHTML = html;
-
-    const tribBtn = this.goalStripEl.querySelector('#btn-collect-tribute');
-    if (tribBtn) {
-      tribBtn.addEventListener('click', () => {
-        const got = e.collectPendingTribute();
-        if (got > 0) this.showToast(`👑 Collected +${got}g Empire Tribute!`);
-        this.syncLiveHud();
-      });
-    }
-
-    const goalUp = this.goalStripEl.querySelector('#btn-goal-upgrade');
-    if (goalUp) {
-      goalUp.addEventListener('click', () => {
-        if (e.instantUpgradeBuilding('homestead')) {
-          this.syncLiveHud();
-        } else {
-          this.showToast('Gather materials & walk onto the Homestead pad to deposit!');
-        }
-      });
-    }
-
-    const goalNext = this.goalStripEl.querySelector('#btn-goal-next-town');
-    if (goalNext) {
-      goalNext.addEventListener('click', () => {
-        this.activeTab = 'map';
-        this.renderDrawer();
-        this.syncLiveHud();
-      });
+    if (html !== this.lastGoalHtml && !this.pointerDownInUi) {
+      this.lastGoalHtml = html;
+      this.goalStripEl.innerHTML = html;
     }
 
     // Update dock active highlight & notification dots
@@ -323,9 +341,12 @@ export class GameHud {
     });
   }
 
-  private renderDrawer(): void {
+  private renderDrawer(force = true): void {
     if (!this.activeTab) {
-      this.drawerHostEl.innerHTML = '';
+      if (this.lastDrawerHtml !== '') {
+        this.lastDrawerHtml = '';
+        this.drawerHostEl.innerHTML = '';
+      }
       return;
     }
 
@@ -342,10 +363,7 @@ export class GameHud {
     else if (this.activeTab === 'explorers') bodyHtml = this.buildExplorersHtml();
     else if (this.activeTab === 'map') bodyHtml = this.buildMapHtml();
 
-    // Preserve scroll position on periodic refresh
-    const prevScroll = this.drawerHostEl.querySelector('.drawer-body')?.scrollTop || 0;
-
-    this.drawerHostEl.innerHTML = `
+    const fullHtml = `
       <div class="drawer-backdrop" id="drawer-backdrop">
         <div class="drawer" id="drawer-panel">
           <div class="drawer-header">
@@ -357,24 +375,16 @@ export class GameHud {
       </div>
     `;
 
-    const bodyEl = this.drawerHostEl.querySelector('.drawer-body')!;
-    bodyEl.scrollTop = prevScroll;
+    // Skip DOM replacement when nothing changed so active clicks/scrolls are NEVER interrupted!
+    if (!force && fullHtml === this.lastDrawerHtml) {
+      return;
+    }
+    this.lastDrawerHtml = fullHtml;
 
-    this.drawerHostEl.querySelector('#drawer-close')!.addEventListener('click', () => {
-      this.activeTab = null;
-      this.renderDrawer();
-      this.syncLiveHud();
-    });
-
-    this.drawerHostEl.querySelector('#drawer-backdrop')!.addEventListener('click', (ev) => {
-      if (ev.target === ev.currentTarget) {
-        this.activeTab = null;
-        this.renderDrawer();
-        this.syncLiveHud();
-      }
-    });
-
-    this.bindDrawerActions();
+    const prevScroll = this.drawerHostEl.querySelector('.drawer-body')?.scrollTop || 0;
+    this.drawerHostEl.innerHTML = fullHtml;
+    const bodyEl = this.drawerHostEl.querySelector('.drawer-body');
+    if (bodyEl) bodyEl.scrollTop = prevScroll;
   }
 
   private buildGearHtml(): string {
@@ -385,7 +395,7 @@ export class GameHud {
       <div class="card">
         <div class="card-info">
           <div class="card-name">Empire Bonus: +${empirePct}% Power</div>
-          <div class="card-sub">Town Halls crowned: ${e.getEmpireTownCount()}/25 · Legacy Points: ${e.save.legacyPoints}</div>
+          <div class="card-sub">Homestead Stars: ${e.getTotalHomesteadStars()}★ (+5% ea) · Town Halls: ${e.getEmpireTownCount()}/25 · Legacy: ${e.save.legacyPoints}</div>
         </div>
         <div style="font-size:22px;">👑</div>
       </div>
@@ -630,104 +640,106 @@ export class GameHud {
     return html;
   }
 
-  private bindDrawerActions(): void {
+  private handleDrawerClick(ev: Event): void {
+    const target = ev.target as HTMLElement;
     const e = this.engine;
-    const panel = this.drawerHostEl.querySelector('#drawer-panel');
-    if (!panel) return;
 
-    panel.querySelectorAll('[data-upgrade]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const key = (btn as HTMLElement).dataset.upgrade as keyof PlayerUpgrades;
-        if (e.buyUpgrade(key)) {
-          this.renderDrawer();
-          this.syncLiveHud();
-        }
-      });
-    });
-
-    panel.querySelectorAll('[data-hire]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const role = (btn as HTMLElement).dataset.hire as WorkerRole;
-        if (e.hireWorker(role)) {
-          this.renderDrawer();
-          this.syncLiveHud();
-        }
-      });
-    });
-
-    panel.querySelectorAll('[data-bldg]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const id = (btn as HTMLElement).dataset.bldg!;
-        if (e.instantUpgradeBuilding(id)) {
-          this.renderDrawer();
-          this.syncLiveHud();
-        }
-      });
-    });
-
-    const sellBtn = panel.querySelector('#btn-sell-stockpile');
-    if (sellBtn) {
-      sellBtn.addEventListener('click', () => {
-        const got = e.sellAllStockpile();
-        if (got > 0) this.showToast(`💰 Sold Town Stockpile for +${got}g!`);
-        this.renderDrawer();
-        this.syncLiveHud();
-      });
+    if (target.id === 'drawer-backdrop' || target.closest('#drawer-close')) {
+      this.activeTab = null;
+      this.renderDrawer(true);
+      this.syncLiveHud();
+      return;
     }
 
-    panel.querySelectorAll('[data-hire-exp]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const id = (btn as HTMLElement).dataset.hireExp!;
-        if (e.hireExplorer(id)) {
-          this.renderDrawer();
-          this.syncLiveHud();
-        }
-      });
-    });
-
-    panel.querySelectorAll('[data-dispatch-exp]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const id = (btn as HTMLElement).dataset.dispatchExp!;
-        const mission = (btn as HTMLElement).dataset.mission!;
-        if (e.dispatchExplorer(id, mission)) {
-          this.showToast('🧭 Explorer dispatched on frontier mission!');
-          this.renderDrawer();
-          this.syncLiveHud();
-        }
-      });
-    });
-
-    panel.querySelectorAll('[data-claim-exp]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const id = (btn as HTMLElement).dataset.claimExp!;
-        if (e.claimExplorerMission(id)) {
-          this.renderDrawer();
-          this.syncLiveHud();
-        }
-      });
-    });
-
-    panel.querySelectorAll('[data-travel]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const id = Number((btn as HTMLElement).dataset.travel);
-        e.loadTownStage(id);
-        this.activeTab = null;
-        this.renderDrawer();
+    const upgradeBtn = target.closest('[data-upgrade]') as HTMLButtonElement | null;
+    if (upgradeBtn && !upgradeBtn.disabled) {
+      const key = upgradeBtn.dataset.upgrade as keyof PlayerUpgrades;
+      if (e.buyUpgrade(key)) {
+        this.renderDrawer(true);
         this.syncLiveHud();
-        this.showToast(`🏔️ Arrived at Town #${id}: ${e.stage.townName}!`);
-      });
-    });
+      }
+      return;
+    }
 
-    const resetBtn = panel.querySelector('#btn-reset-save');
-    if (resetBtn) {
-      resetBtn.addEventListener('click', () => {
-        if (window.confirm('Reset all Frostfall Frontier progress and start fresh from Town #1?')) {
-          e.resetAllProgress();
-          this.activeTab = null;
-          this.renderDrawer();
-          this.syncLiveHud();
-        }
-      });
+    const hireBtn = target.closest('[data-hire]') as HTMLButtonElement | null;
+    if (hireBtn && !hireBtn.disabled) {
+      const role = hireBtn.dataset.hire as WorkerRole;
+      if (e.hireWorker(role)) {
+        this.renderDrawer(true);
+        this.syncLiveHud();
+      }
+      return;
+    }
+
+    const bldgBtn = target.closest('[data-bldg]') as HTMLButtonElement | null;
+    if (bldgBtn && !bldgBtn.disabled) {
+      const id = bldgBtn.dataset.bldg!;
+      if (e.instantUpgradeBuilding(id)) {
+        this.renderDrawer(true);
+        this.syncLiveHud();
+      }
+      return;
+    }
+
+    const sellBtn = target.closest('#btn-sell-stockpile') as HTMLButtonElement | null;
+    if (sellBtn && !sellBtn.disabled) {
+      const got = e.sellAllStockpile();
+      if (got > 0) this.showToast(`💰 Sold Town Stockpile for +${got}g!`);
+      this.renderDrawer(true);
+      this.syncLiveHud();
+      return;
+    }
+
+    const hireExpBtn = target.closest('[data-hire-exp]') as HTMLButtonElement | null;
+    if (hireExpBtn && !hireExpBtn.disabled) {
+      const id = hireExpBtn.dataset.hireExp!;
+      if (e.hireExplorer(id)) {
+        this.renderDrawer(true);
+        this.syncLiveHud();
+      }
+      return;
+    }
+
+    const dispatchBtn = target.closest('[data-dispatch-exp]') as HTMLButtonElement | null;
+    if (dispatchBtn && !dispatchBtn.disabled) {
+      const id = dispatchBtn.dataset.dispatchExp!;
+      const mission = dispatchBtn.dataset.mission!;
+      if (e.dispatchExplorer(id, mission)) {
+        this.showToast('🧭 Explorer dispatched on frontier mission!');
+        this.renderDrawer(true);
+        this.syncLiveHud();
+      }
+      return;
+    }
+
+    const claimBtn = target.closest('[data-claim-exp]') as HTMLButtonElement | null;
+    if (claimBtn && !claimBtn.disabled) {
+      const id = claimBtn.dataset.claimExp!;
+      if (e.claimExplorerMission(id)) {
+        this.renderDrawer(true);
+        this.syncLiveHud();
+      }
+      return;
+    }
+
+    const travelBtn = target.closest('[data-travel]') as HTMLButtonElement | null;
+    if (travelBtn && !travelBtn.disabled) {
+      const id = Number(travelBtn.dataset.travel);
+      e.loadTownStage(id);
+      this.activeTab = null;
+      this.renderDrawer(true);
+      this.syncLiveHud();
+      this.showToast(`🏔️ Arrived at Town #${id}: ${e.stage.townName}!`);
+      return;
+    }
+
+    if (target.closest('#btn-reset-save')) {
+      if (window.confirm('Reset all Frostfall Frontier progress and start fresh from Town #1?')) {
+        e.resetAllProgress();
+        this.activeTab = null;
+        this.renderDrawer(true);
+        this.syncLiveHud();
+      }
     }
   }
 }

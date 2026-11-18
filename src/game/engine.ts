@@ -235,12 +235,31 @@ export class GameEngine {
 
   // ==================== DERIVED PLAYER STATS ====================
 
+  public getTotalHomesteadStars(): number {
+    let stars = this.homesteadTier;
+    for (const [idStr, rec] of Object.entries(this.save.towns)) {
+      if (Number(idStr) === this.stage.id) continue;
+      stars += rec.homesteadTier || 0;
+    }
+    return stars;
+  }
+
   public getEmpireTownCount(): number {
-    return Object.values(this.save.towns).filter((t) => t.reachedTownHall).length;
+    let count = this.homesteadTier >= 5 ? 1 : 0;
+    for (const [idStr, rec] of Object.entries(this.save.towns)) {
+      if (Number(idStr) === this.stage.id) continue;
+      if (rec.reachedTownHall || rec.homesteadTier >= 5) count += 1;
+    }
+    return count;
   }
 
   public getEmpireMultiplier(): number {
-    return 1 + this.getEmpireTownCount() * 0.15 + this.save.legacyPoints * 0.015;
+    return (
+      1 +
+      this.getTotalHomesteadStars() * 0.05 +
+      this.getEmpireTownCount() * 0.15 +
+      this.save.legacyPoints * 0.02
+    );
   }
 
   public getUnlockedZone(): number {
