@@ -141,9 +141,10 @@ export interface BuildingState {
   outputStock: number;
   processTimer: number;
   processDuration: number;
-  // Furnace fuel
+  // Furnace fuel & overdrive
   fuel: number; // 0..100
   maxFuel: number;
+  overdriveTimer?: number;
   bounceAnim: number;
 }
 
@@ -273,6 +274,41 @@ export interface Footprint {
   life: number;
 }
 
+export interface GroundLoot {
+  id: number;
+  resource: ResourceType | 'gold';
+  amount: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  age: number;
+  z: number;
+  vz: number;
+}
+
+export interface SlashArc {
+  x: number;
+  y: number;
+  angle: number;
+  radius: number;
+  color: string;
+  life: number;
+  maxLife: number;
+  crit: boolean;
+}
+
+export interface Ember {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  size: number;
+  life: number;
+  maxLife: number;
+  color: string;
+}
+
 export interface PlayerState {
   x: number;
   y: number;
@@ -285,11 +321,16 @@ export interface PlayerState {
   backpack: ResourceType[];
   swingTimer: number;
   swingTool: 'axe' | 'pick' | 'spear' | 'none';
+  swingCount: number;
   hurtFlash: number;
   walkCycle: number;
   footstepTimer: number;
   transferCooldown: number;
   stewBuffTimer: number;
+  dashTimer: number;
+  dashCooldown: number;
+  dashDirX: number;
+  dashDirY: number;
 }
 
 export interface PlayerUpgrades {

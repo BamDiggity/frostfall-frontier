@@ -5,11 +5,13 @@ import {
   BlizzardState,
   BuildingState,
   CustomerEntity,
+  Ember,
   ExplorerMissionDef,
   FloatingText,
   FlyingItem,
   Footprint,
   GlobalSaveState,
+  GroundLoot,
   HOMESTEAD_TIERS,
   HomesteadTier,
   Particle,
@@ -19,6 +21,7 @@ import {
   ResourceNode,
   ResourceNodeKind,
   ResourceType,
+  SlashArc,
   StageDef,
   TownSaveRecord,
   WildlifeEntity,
@@ -76,9 +79,13 @@ export class GameEngine {
   public workers: WorkerEntity[] = [];
   public customers: CustomerEntity[] = [];
   public flyingItems: FlyingItem[] = [];
+  public groundLoot: GroundLoot[] = [];
+  public slashArcs: SlashArc[] = [];
+  public embers: Ember[] = [];
   public particles: Particle[] = [];
   public floatingTexts: FloatingText[] = [];
   public footprints: Footprint[] = [];
+  public showCompass = true;
   public townStockpile: Partial<Record<ResourceType, number>> = {};
   public workerCounts: WorkerCounts = { lumberjack: 0, miner: 0, hunter: 0, hauler: 0, merchant: 0 };
 
@@ -137,11 +144,16 @@ export class GameEngine {
       backpack: [],
       swingTimer: 0,
       swingTool: 'none',
+      swingCount: 0,
       hurtFlash: 0,
       walkCycle: 0,
       footstepTimer: 0,
       transferCooldown: 0,
       stewBuffTimer: 0,
+      dashTimer: 0,
+      dashCooldown: 0,
+      dashDirX: 0,
+      dashDirY: -1,
     };
   }
 
@@ -275,10 +287,87 @@ export class GameEngine {
   }
 
   public getPlayerSpeed(): number {
-    const base = 175 + (this.save.upgrades.bootsLevel - 1) * 20;
+    const base = 185 + (this.save.upgrades.bootsLevel - 1) * 20;
+    const furnace = this.buildings.find((b) => b.kind === 'furnace');
+    const hearthOverdrive = (furnace?.overdriveTimer || 0) > 0 ? 1.25 : 1.0;
     const stewMult = this.player.stewBuffTimer > 0 ? 1.25 : 1.0;
-    const coldMult = this.player.warmth < 25 ? 0.72 : 1.0;
-    return base * stewMult * coldMult;
+    const coldMult = this.player.warmth < 25 ? 0.75 : 1.0;
+    return base * hearthOverdrive * stewMult * coldMult;
+  }
+
+  public triggerDash(): boolean {
+    const p = this.player;
+    if (p.dashCooldown > 0 || p.dashTimer > 0) return false;
+    const iv = this.computeInputVector();
+    const len = Math.hypot(iv.x, iv.y);
+    if (len > 0.1) {
+      p.dashDirX = iv.x / len;
+      p.dashDirY = iv.y / len;
+    } else {
+      p.dashDirX = Math.cos(p.facing);
+      p.dashDirY = Math.sin(p.facing);
+    }
+    p.facing = Math.atan2(p.dashDirY, p.dashDirX);
+    p.dashTimer = 0.21;
+    p.dashCooldown = 1.65;
+    sfx.playDash();
+    this.spawnBurst(p.x, p.y + 4, '#e0f2fe', 10);
+    return true;
+  }
+
+  public getObjectiveTarget(): { x: number; y: number; label: string; color: string } | null {
+    if (!this.showCompass) return null;
+    const p = this.player;
+    const unlockedZone = this.getUnlockedZone();
+    const home = this.buildings.find((b) => b.kind === 'homestead');
+
+    // 1. If backpack is full, guide to Storehouse or Trading Sled
+    if (p.backpack.length >= this.getBackpackCapacity()) {
+      const store = this.buildings.find((b) => b.kind === 'storehouse');
+      if (store) return { x: store.x, y: store.y, label: 'Store Pack', color: '#38bdf8' };
+    }
+
+    // 2. If Homestead upgrade is ready, guide straight to Homestead!
+    if (home && home.level < 5) {
+      const cost = this.getBuildingNextCost(home);
+      let ready = this.save.gold >= Math.max(0, cost.gold - home.depositedGold);
+      let missingRes: ResourceType | null = null;
+      for (const [k, v] of Object.entries(cost.resources)) {
+        const res = k as ResourceType;
+        const rem = Math.max(0, (v || 0) - (home.deposited[res] || 0));
+        if (rem > 0 && this.getTotalAvailableResource(res) < rem) {
+          ready = false;
+          if (!missingRes) missingRes = res;
+        }
+      }
+      if (ready) {
+        return { x: home.x, y: home.y, label: 'Upgrade Homestead!', color: '#facc15' };
+      }
+      // Guide to nearest missing resource node or wildlife!
+      if (missingRes === 'meat' || missingRes === 'pelt') {
+        const prey = this.wildlife
+          .filter((w) => w.state !== 'dead' && w.zone <= unlockedZone)
+          .sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y))[0];
+        if (prey) return { x: prey.x, y: prey.y, label: `Hunt ${missingRes}`, color: '#fb7185' };
+      } else if (missingRes && ['wood', 'coal', 'iron', 'crystal'].includes(missingRes)) {
+        const node = this.nodes
+          .filter((n) => n.respawnTimer <= 0 && n.zone <= unlockedZone && n.resource === missingRes)
+          .sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y))[0];
+        if (node) return { x: node.x, y: node.y, label: `Gather ${RESOURCE_META[missingRes].shortName}`, color: '#4ade80' };
+      } else if (missingRes) {
+        // Refined resource -> point to its producer building!
+        const producer = this.buildings.find((b) => b.outputType === missingRes && b.zoneRequired <= unlockedZone);
+        if (producer) return { x: producer.x, y: producer.y, label: producer.name, color: '#a78bfa' };
+      } else if (this.save.gold < Math.max(0, cost.gold - home.depositedGold)) {
+        const trade = this.buildings.find((b) => b.kind === 'trading_post');
+        if (trade && p.backpack.length > 0) return { x: trade.x, y: trade.y, label: 'Sell for Gold', color: '#facc15' };
+      }
+    }
+
+    // 3. Unbuilt unlocked business plot
+    const unbuilt = this.buildings.find((b) => b.level === 0 && b.zoneRequired <= unlockedZone);
+    if (unbuilt) return { x: unbuilt.x, y: unbuilt.y, label: `Build ${unbuilt.name}`, color: '#38bdf8' };
+    return null;
   }
 
   public getAxeDamage(): number {
@@ -383,6 +472,9 @@ export class GameEngine {
     this.workers = [];
     this.customers = [];
     this.flyingItems = [];
+    this.groundLoot = [];
+    this.slashArcs = [];
+    this.embers = [];
     this.particles = [];
     this.floatingTexts = [];
     this.footprints = [];
@@ -958,9 +1050,31 @@ export class GameEngine {
   private updatePlayer(dt: number): void {
     const p = this.player;
     this.inputVec = this.computeInputVector();
+    if (p.dashCooldown > 0) p.dashCooldown = Math.max(0, p.dashCooldown - dt);
+
     const speed = this.getPlayerSpeed();
-    p.vx = this.inputVec.x * speed;
-    p.vy = this.inputVec.y * speed;
+    if (p.dashTimer > 0) {
+      p.dashTimer = Math.max(0, p.dashTimer - dt);
+      p.vx = p.dashDirX * speed * 2.85;
+      p.vy = p.dashDirY * speed * 2.85;
+      if (Math.random() < 0.75) {
+        this.particles.push({
+          x: p.x + (Math.random() - 0.5) * 14,
+          y: p.y + 4,
+          vx: -p.vx * 0.12,
+          vy: -p.vy * 0.12 - 15,
+          size: 3.2,
+          color: '#e0f2fe',
+          alpha: 0.85,
+          life: 0.25,
+          maxLife: 0.25,
+          gravity: 110,
+        });
+      }
+    } else {
+      p.vx = this.inputVec.x * speed;
+      p.vy = this.inputVec.y * speed;
+    }
     p.x += p.vx * dt;
     p.y += p.vy * dt;
 
@@ -1051,9 +1165,18 @@ export class GameEngine {
     }
 
     if (closestWild) {
-      p.facing = Math.atan2(closestWild.y - p.y, closestWild.x - p.x);
+      const ang = Math.atan2(closestWild.y - p.y, closestWild.x - p.x);
+      p.facing = ang;
       p.swingTool = 'spear';
-      this.damageWildlife(closestWild, this.getWeaponDamage(), true);
+      p.swingCount += 1;
+      const crit = p.swingCount % 4 === 0;
+      const dmg = this.getWeaponDamage() * (crit ? 1.55 : 1);
+      this.spawnSlashArc(p.x, p.y - 10, ang, 46, crit ? '#facc15' : '#fda4af', crit);
+      if (crit) {
+        sfx.playCrit();
+        this.spawnFloatingText(closestWild.x, closestWild.y - 34, 'CRIT!', '#facc15', 1.2);
+      }
+      this.damageWildlife(closestWild, dmg, true);
       return true;
     }
 
@@ -1074,10 +1197,19 @@ export class GameEngine {
     }
 
     if (closestNode) {
-      p.facing = Math.atan2(closestNode.y - p.y, closestNode.x - p.x);
+      const ang = Math.atan2(closestNode.y - p.y, closestNode.x - p.x);
+      p.facing = ang;
       const isTree = closestNode.kind === 'pine' || closestNode.kind === 'ancient_pine';
       p.swingTool = isTree ? 'axe' : 'pick';
-      const dmg = isTree ? this.getAxeDamage() : this.getPickDamage();
+      p.swingCount += 1;
+      const crit = p.swingCount % 4 === 0;
+      const baseDmg = isTree ? this.getAxeDamage() : this.getPickDamage();
+      const dmg = baseDmg * (crit ? 1.55 : 1);
+      this.spawnSlashArc(p.x, p.y - 10, ang, 42, crit ? '#facc15' : isTree ? '#e2e8f0' : '#7dd3fc', crit);
+      if (crit) {
+        sfx.playCrit();
+        this.spawnFloatingText(closestNode.x, closestNode.y - 34, 'CRIT!', '#facc15', 1.15);
+      }
       this.damageNode(closestNode, dmg, true);
       return true;
     }
@@ -1113,7 +1245,7 @@ export class GameEngine {
 
       if (byPlayer) {
         if (isTree) this.save.totalTreesChopped += 1;
-        this.givePlayerResource(node.resource, yieldAmt, node.x, node.y - 10);
+        this.spawnGroundLoot(node.resource, yieldAmt, node.x, node.y - 8);
       } else {
         this.addStockpile(node.resource, yieldAmt);
       }
@@ -1149,9 +1281,9 @@ export class GameEngine {
 
       if (byPlayer) {
         this.save.totalAnimalsHunted += 1;
-        this.givePlayerResource('meat', meat, w.x, w.y);
-        this.givePlayerResource('pelt', pelt, w.x, w.y);
-        if (w.dropBonus) this.givePlayerResource(w.dropBonus, 2, w.x, w.y);
+        this.spawnGroundLoot('meat', meat, w.x, w.y);
+        this.spawnGroundLoot('pelt', pelt, w.x, w.y);
+        if (w.dropBonus) this.spawnGroundLoot(w.dropBonus, 2, w.x, w.y);
         this.addGold(gold, w.x, w.y - 18);
         sfx.playCoin();
       } else {
@@ -1264,16 +1396,22 @@ export class GameEngine {
         return;
       }
 
-      // 2. Furnace: stoke fuel if low
-      if (b.kind === 'furnace' && b.fuel < 85) {
+      // 2. Furnace: stoke fuel & trigger Blazing Hearth Overdrive!
+      if (b.kind === 'furnace' && (b.fuel < 92 || (b.overdriveTimer || 0) <= 0)) {
         const fuelItem = p.backpack.includes('coal') ? 'coal' : p.backpack.includes('wood') ? 'wood' : null;
-        if (fuelItem) {
+        if (fuelItem && b.fuel < 96) {
           const idx = p.backpack.lastIndexOf(fuelItem);
           p.backpack.splice(idx, 1);
-          const fuelGain = fuelItem === 'coal' ? 35 : 18;
+          const fuelGain = fuelItem === 'coal' ? 38 : 20;
           b.fuel = Math.min(b.maxFuel, b.fuel + fuelGain);
           this.spawnFlyingItem(fuelItem, p.x, p.y - 24, b.x, b.y - 10);
-          this.spawnFloatingText(b.x, b.y - 38, `🔥 +${fuelGain}% Heat`, '#ff9f43');
+          if (b.fuel >= 95 && (b.overdriveTimer || 0) <= 1) {
+            b.overdriveTimer = 20;
+            this.spawnFloatingText(b.x, b.y - 46, '🔥 BLAZING HEARTH! +25% Speed', '#fde047', 1.15);
+            this.spawnBurst(b.x, b.y - 16, '#fb923c', 16);
+          } else {
+            this.spawnFloatingText(b.x, b.y - 38, `🔥 +${fuelGain}% Heat`, '#ff9f43');
+          }
           sfx.playPop(5);
           b.bounceAnim = 0.25;
           p.transferCooldown = 0.14;
@@ -1490,7 +1628,7 @@ export class GameEngine {
           this.spawnBurst(w.telegraphX, w.telegraphY, '#ff6b6b', 10);
           w.x += (w.telegraphX - w.x) * 0.45;
           w.y += (w.telegraphY - w.y) * 0.45;
-          if (hitDist < w.radius + 32) {
+          if (hitDist < w.radius + 32 && p.dashTimer <= 0) {
             p.hp = Math.max(0, p.hp - w.attackDamage);
             p.hurtFlash = 0.5;
             this.camera.shake = 7;
@@ -1585,6 +1723,22 @@ export class GameEngine {
       if (b.level <= 0) continue;
 
       if (b.kind === 'furnace') {
+        if ((b.overdriveTimer || 0) > 0) {
+          b.overdriveTimer = Math.max(0, (b.overdriveTimer || 0) - dt);
+        }
+        // Rising glowing hearth embers
+        if (Math.random() < ((b.overdriveTimer || 0) > 0 ? 0.45 : 0.18)) {
+          this.embers.push({
+            x: b.x + (Math.random() - 0.5) * 26,
+            y: b.y - 24,
+            vx: (Math.random() - 0.5) * 22,
+            vy: -32 - Math.random() * 34,
+            size: 1.8 + Math.random() * 2.2,
+            life: 0.9 + Math.random() * 0.7,
+            maxLife: 1.6,
+            color: Math.random() < 0.5 ? '#fde047' : '#fb923c',
+          });
+        }
         const burnRate = (0.75 + this.blizzard.intensity * 1.1) / (1 + (b.level - 1) * 0.25);
         b.fuel = Math.max(8, b.fuel - burnRate * dt);
         // Auto-stoke slowly from town stockpile if fuel drops below 40%
@@ -2143,6 +2297,48 @@ export class GameEngine {
 
   // ==================== VISUAL FX HELPERS ====================
 
+  private spawnSlashArc(
+    x: number,
+    y: number,
+    angle: number,
+    radius: number,
+    color: string,
+    crit: boolean
+  ): void {
+    this.slashArcs.push({
+      x,
+      y,
+      angle,
+      radius,
+      color,
+      life: crit ? 0.24 : 0.17,
+      maxLife: crit ? 0.24 : 0.17,
+      crit,
+    });
+  }
+
+  private spawnGroundLoot(resource: ResourceType, amount: number, x: number, y: number): void {
+    const pieces = Math.min(amount, 5);
+    const perPiece = Math.floor(amount / pieces);
+    const remainder = amount % pieces;
+    for (let i = 0; i < pieces; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const spd = 65 + Math.random() * 65;
+      this.groundLoot.push({
+        id: this.nextFlyId++,
+        resource,
+        amount: perPiece + (i < remainder ? 1 : 0),
+        x,
+        y,
+        vx: Math.cos(a) * spd,
+        vy: Math.sin(a) * spd,
+        age: 0,
+        z: 8,
+        vz: 120 + Math.random() * 55,
+      });
+    }
+  }
+
   private spawnFlyingItem(
     resource: ResourceType | 'gold',
     startX: number,
@@ -2187,6 +2383,53 @@ export class GameEngine {
   }
 
   private updateVisualFx(dt: number): void {
+    // Magnetic ground loot bounce + vacuum into backpack!
+    const p = this.player;
+    for (let i = this.groundLoot.length - 1; i >= 0; i--) {
+      const gl = this.groundLoot[i];
+      gl.age += dt;
+      if (gl.age < 0.24) {
+        gl.x += gl.vx * dt;
+        gl.y += gl.vy * dt;
+        gl.vx *= Math.pow(0.08, dt);
+        gl.vy *= Math.pow(0.08, dt);
+        gl.vz -= 480 * dt;
+        gl.z = Math.max(0, gl.z + gl.vz * dt);
+      } else {
+        // Magnetic pull toward player!
+        const dx = p.x - gl.x;
+        const dy = p.y - 16 - gl.y;
+        const dist = Math.hypot(dx, dy);
+        const pullSpeed = 420 + gl.age * 360;
+        if (dist < 26 || gl.age > 1.25) {
+          if (gl.resource !== 'gold') {
+            this.givePlayerResource(gl.resource, gl.amount, gl.x, gl.y);
+          }
+          this.groundLoot.splice(i, 1);
+          continue;
+        }
+        gl.x += (dx / dist) * pullSpeed * dt;
+        gl.y += (dy / dist) * pullSpeed * dt;
+        gl.z += (14 - gl.z) * Math.min(1, dt * 10);
+      }
+    }
+
+    for (let i = this.slashArcs.length - 1; i >= 0; i--) {
+      this.slashArcs[i].life -= dt;
+      if (this.slashArcs[i].life <= 0) this.slashArcs.splice(i, 1);
+    }
+
+    for (let i = this.embers.length - 1; i >= 0; i--) {
+      const em = this.embers[i];
+      em.life -= dt;
+      if (em.life <= 0) {
+        this.embers.splice(i, 1);
+        continue;
+      }
+      em.x += (em.vx + Math.sin(this.elapsedTime * 5 + i) * 14) * dt;
+      em.y += em.vy * dt;
+    }
+
     for (let i = this.flyingItems.length - 1; i >= 0; i--) {
       const f = this.flyingItems[i];
       f.progress += dt / f.duration;

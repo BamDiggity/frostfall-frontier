@@ -31,7 +31,7 @@ let viewWidth = window.innerWidth;
 let viewHeight = window.innerHeight;
 
 function resizeCanvas(): void {
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const dpr = Math.min(3, window.devicePixelRatio || 1);
   viewWidth = window.innerWidth;
   viewHeight = window.innerHeight;
   canvas.width = Math.floor(viewWidth * dpr);
@@ -61,9 +61,14 @@ const endPointer = (e: PointerEvent) => {
 canvas.addEventListener('pointerup', endPointer);
 canvas.addEventListener('pointercancel', endPointer);
 
-// Keyboard support (WASD + Arrows)
+// Keyboard support (WASD + Arrows + Space/Shift Dash)
 window.addEventListener('keydown', (e) => {
   if (hud.isBlockingCanvas()) return;
+  if (e.code === 'Space' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+    e.preventDefault();
+    engine.triggerDash();
+    return;
+  }
   engine.setKey(e.code, true);
 });
 window.addEventListener('keyup', (e) => {

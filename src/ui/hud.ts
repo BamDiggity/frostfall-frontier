@@ -21,6 +21,8 @@ export class GameHud {
   private topWarmthTextEl!: HTMLElement;
   private muteBtnEl!: HTMLElement;
   private goalStripEl!: HTMLElement;
+  private resStripEl!: HTMLElement;
+  private dashBtnEl!: HTMLElement;
   private toastEl!: HTMLElement;
   private dockEl!: HTMLElement;
   private drawerHostEl!: HTMLElement;
@@ -28,6 +30,7 @@ export class GameHud {
 
   private uiRefreshAccum = 0;
   private lastGoalHtml = '';
+  private lastResHtml = '';
   private lastDrawerHtml = '';
   private pointerDownInUi = false;
 
@@ -93,12 +96,18 @@ export class GameHud {
           </div>
           <div class="goal-strip" id="hud-goal-strip"></div>
         </div>
+        <div class="res-strip" id="hud-res-strip"></div>
       </div>
 
       <div class="toast-box" id="hud-toast"></div>
 
+      <button class="dash-fab" id="btn-dash" aria-label="Dash">
+        <span class="dash-ico">⚡</span>
+        <span id="dash-label">DASH</span>
+      </button>
+
       <div class="hud-bottom">
-        <div class="control-hint">Drag anywhere or WASD to move · Auto-chop, hunt &amp; build</div>
+        <div class="control-hint">Drag or WASD to move · Space / ⚡ to Dash · Auto-chop, hunt &amp; build</div>
         <div class="dock" id="hud-dock">
           <button class="dock-btn" data-tab="gear"><span class="ico">🛠️</span><span>Gear</span></button>
           <button class="dock-btn" data-tab="town"><span class="ico">🏘️</span><span>Town</span></button>
@@ -118,6 +127,8 @@ export class GameHud {
     this.topWarmthTextEl = this.root.querySelector('#hud-warmth-txt')!;
     this.muteBtnEl = this.root.querySelector('#hud-mute')!;
     this.goalStripEl = this.root.querySelector('#hud-goal-strip')!;
+    this.resStripEl = this.root.querySelector('#hud-res-strip')!;
+    this.dashBtnEl = this.root.querySelector('#btn-dash')!;
     this.toastEl = this.root.querySelector('#hud-toast')!;
     this.dockEl = this.root.querySelector('#hud-dock')!;
     this.drawerHostEl = this.root.querySelector('#drawer-host')!;
@@ -138,6 +149,12 @@ export class GameHud {
       if (!sfx.muted) sfx.unlock();
       this.engine.persistSave();
       this.syncLiveHud();
+    });
+
+    this.dashBtnEl.addEventListener('pointerdown', (ev) => {
+      ev.stopPropagation();
+      sfx.unlock();
+      this.engine.triggerDash();
     });
 
     this.dockEl.addEventListener('click', (e) => {
@@ -232,6 +249,26 @@ export class GameHud {
       this.goalStripEl.innerHTML = html;
     }
 
+    // Live compact combined resource strip (Backpack + Storehouse)
+    const resHtml = ALL_RESOURCES.map((r) => {
+      const total = e.getTotalAvailableResource(r);
+      return total > 0 ? `<span class="res-mini">${RESOURCE_META[r].icon} ${total}</span>` : '';
+    })
+      .filter(Boolean)
+      .join('');
+    if (resHtml !== this.lastResHtml) {
+      this.lastResHtml = resHtml;
+      this.resStripEl.innerHTML = resHtml;
+    }
+
+    // Dash button cooldown display
+    const cd = e.player.dashCooldown;
+    this.dashBtnEl.classList.toggle('cooling', cd > 0);
+    const dashLbl = this.dashBtnEl.querySelector('#dash-label');
+    if (dashLbl) {
+      dashLbl.textContent = cd > 0 ? `${cd.toFixed(1)}s` : 'DASH';
+    }
+
     // Update dock active highlight & notification dots
     const hasClaimableExplorer = e.save.explorers.some((ex) => ex.activeMissionId && ex.missionRemainingSec <= 0);
     const canBuyUpgrade = e.getUpgradeList().some((u) => u.level < u.maxLevel && e.save.gold >= u.cost);
@@ -291,7 +328,11 @@ export class GameHud {
       sfx.playUpgrade();
       this.showTitleScreen = false;
       this.modalHostEl.innerHTML = '';
-      this.showToast('Chop pine trees & walk to the Campfire pad to build your Timber Hut!');
+      if (isReturning) {
+        this.showToast(`🏔️ Welcome back to #${e.stage.id} ${e.stage.townName}!`);
+      } else {
+        this.showToast('Chop pine trees & walk to the Campfire pad to build your Timber Hut!');
+      }
     });
   }
 

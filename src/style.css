@@ -130,6 +130,66 @@ body,
   flex-wrap: wrap;
 }
 
+.res-strip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  pointer-events: none;
+}
+
+.res-mini {
+  background: rgba(12, 23, 38, 0.78);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(148, 210, 255, 0.22);
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 11.5px;
+  font-weight: 800;
+  color: #e2e8f0;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.22);
+}
+
+.dash-fab {
+  position: fixed;
+  right: 16px;
+  bottom: max(104px, calc(env(safe-area-inset-bottom, 12px) + 92px));
+  width: 62px;
+  height: 62px;
+  border-radius: 50%;
+  border: 2px solid rgba(125, 211, 252, 0.85);
+  background: linear-gradient(145deg, rgba(14, 165, 233, 0.92), rgba(37, 99, 235, 0.92));
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 900;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  box-shadow: 0 8px 22px rgba(2, 132, 199, 0.48), inset 0 1px 1px rgba(255, 255, 255, 0.45);
+  cursor: pointer;
+  pointer-events: auto;
+  z-index: 22;
+  transition: transform 0.08s ease, opacity 0.15s ease;
+}
+
+.dash-fab:active {
+  transform: scale(0.92);
+}
+
+.dash-fab.cooling {
+  opacity: 0.55;
+  background: rgba(30, 41, 59, 0.86);
+  border-color: rgba(148, 163, 184, 0.45);
+  box-shadow: none;
+}
+
+.dash-fab .dash-ico {
+  font-size: 20px;
+  line-height: 1;
+}
+
 .goal-banner {
   pointer-events: auto;
   display: inline-flex;
